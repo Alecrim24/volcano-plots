@@ -1,0 +1,208 @@
+# Paths
+featurescountdata_path_mb <- "C:/Users/bop21gwh/Documents/PhD work/hisat/featurescount_mb_with_M.b.gff.txt"
+meta_data_file_path_mb <- "C:/Users/bop21gwh/Documents/PhD work/genomics/Hisat2/metadata.csv"
+mb_gtf_file <- "C:/Users/bop21gwh/Documents/PhD work/hisat/output_file_m.b.tsv"
+
+# Libraries
+library(DESeq2)
+library(readr)
+library(dplyr)
+
+# Step 1: Load feature counts data
+countdata_features_mb <- read.table(featurescountdata_path_mb, header = TRUE, sep = "\t")
+cat("Count data dimensions:", dim(countdata_features_mb), "\n")
+print(colnames(countdata_features_mb))
+filtered_featurecounts_mb <- countdata_features_mb[, -c(2:6)]
+rownames(filtered_featurecounts_mb) <- filtered_featurecounts_mb$Geneid
+
+# Step 2: Load metadata
+meta_data_new_mb <- read.csv(meta_data_file_path_mb)
+filtered_meta_data_mb <- meta_data_new_mb[meta_data_new_mb$Species == "M.b", ]
+metadata_samples_mb <- filtered_meta_data_mb$Sample
+
+# Ensure alignment between metadata and count data
+countdata_mb_features <- colnames(filtered_featurecounts_mb)[-1]
+# insert code for 
+colnames(filtered_featurecounts_mb) <- gsub("^X\\.nobackup\\.qkdf72\\.hisat2\\.m\\.b_results\\.", "", colnames(filtered_featurecounts_mb))
+colnames(filtered_featurecounts_mb)[-1] <- paste0("X", colnames(filtered_featurecounts_mb)[-1])
+
+# extract colnames
+countdata_mb_features <- colnames(filtered_featurecounts_mb)[-1]
+print(countdata_mb_features)
+
+countdata_filtered_features_mb <- filtered_featurecounts_mb[, match(metadata_samples_mb, countdata_mb_features) + 1]
+rownames(countdata_filtered_features_mb) <- filtered_featurecounts_mb$Geneid
+
+
+# Step 3: Create DESeq2 dataset
+dds_mb <- DESeqDataSetFromMatrix(
+  countData = round(countdata_filtered_features_mb),
+  colData = filtered_meta_data_mb,
+  design = ~ Tissue
+)
+dds_2_mb <- DESeq(dds_mb)
+
+
+
+
+# Perform variance stabilizing transformation (VST)
+vsd <- vst(dds, blind = FALSE)
+
+# Install GenomicFeatures package if you haven't already
+install.packages("GenomicFeatures")
+
+# Load the package
+library(GenomicFeatures)
+
+
+# Set the file path for the GTF file
+gtf_file_path <- "C:/Users/bop21gwh/Documents/PhD work/genomics/Hisat2/cleaned_m.b_annotation.gtf"
+
+# Load the GTF file (make sure it's cleaned using gffread if needed)
+txdb <- makeTxDbFromGFF(gtf_file_path, format="gtf")
+
+# Extract gene annotations from the GTF file
+gene_annotations <- genes(txdb)
+
+# Extract results for a specific contrast (adjust as needed)
+res_ws <- results(dds_2_mb, contrast = c('Tissue', 'Fertilizer_cavity_warty', 'Fertilizer_cavity_smooth'))  # Adjust contrast
+
+# check what you can contrast
+levels(dds_2_mb$Tissue)
+
+# List available keytypes in txdb
+keytypes(txdb)
+
+# View first few gene IDs from res to ensure they match the expected format
+head(row.names(res_ws))  # Ensure this matches the GENEID format
+
+# Annotate the results with gene symbols from the GTF file
+# Map the Gene_IDs from DESeq2 results to gene symbols using the correct keytype
+res_ws$symbol <- mapIds(txdb, 
+                        keys=row.names(res_ws), 
+                        column="GENEID", 
+                        keytype="GENEID", 
+                        multiVals="first")
+
+# Check the first few gene symbols to confirm successful annotation
+head(res_ws$symbol)
+
+head(res_ws)
+#### fixing zone
+
+# Step 1: Check the structure of res_ws to understand its current format
+str(res_ws)
+
+# Step 2: If res_ws is not a data frame, convert it into one
+if (!is.data.frame(res_ws)) {
+  res_ws <- as.data.frame(res_ws)
+}
+
+# Step 3: Add row names as a new column called "Gene_id"
+res_ws <- res_ws %>%
+  rownames_to_column(var = "Gene_id")
+
+# Step 4: Inspect the result
+head(res_ws)
+
+# Ensure that interpro_data_mb_clean is a tibble or data.frame and then use select
+res_annotated <- res_ws %>%
+  left_join(dplyr::select(as.data.frame(interpro_data_mb_clean), Protein_ID, Description), 
+            by = c("Gene_id" = "Protein_ID"))
+
+# Check the result
+head(res_annotated)
+
+
+
+
+# Generate a volcano plot
+
+###################################
+library(EnhancedVolcano)
+
+
+
+## check so far
+
+volcano_plot <- EnhancedVolcano(res_ws,
+                                lab = res_ws$symbol,  # Label by gene symbols
+                                selectLab = res_ws$symbol,  # Label all points with symbols
+                                x = 'log2FoldChange',  # X-axis: log2 fold change
+                                y = 'pvalue',  # Y-axis: p-values
+                                title = 'Myrmecodia beccarii No_ants_warty vs No_ants_smooth',
+                                xlab = 'Log2 Fold Change',
+                                ylab = '-Log10 P-value',
+                                pCutoff = 0.1,  # Set the p-value cutoff
+                                FCcutoff = 1.0,  # Set the log2 fold change cutoff
+                                pointSize = 3.0,  # Adjust point size
+                                labSize = 3.0,  # Adjust label size
+                                max.overlaps = Inf)  # Allow overlapping labels
+
+# Display the volcano plot
+print(volcano_plot)
+
+print(res_ws)
+
+
+# Set the file path for the InterPro data
+interpro_data_mb_path <- "C:/Users/bop21gwh/Documents/PhD work/hisat/output_file_m.b.tsv"
+
+######## now adding the descriptions
+
+
+# Read the InterPro data from a tab-separated file
+interpro_data_mb <- read_tsv(interpro_data_mb_path)
+head(interpro_data_mb)
+
+# Step 4: Load GTF data and search for specific gene functions
+#interpro_data_mb <- read_tsv(mb_gtf_file, col_names = FALSE)
+colnames(interpro_data_mb) <- c("Protein_ID", "MD5sum", "Length", "Database", "Database_Acc", 
+                                "Description", "Start", "End", "E-value", "Status", "Date", 
+                                "InterPro_ID", "InterPro_Desc", "GO_Terms", "Pathways")
+
+
+# View the data to ensure it loaded correctly - check if the genes have .1 - remove .1
+head(interpro_data_mb$Protein_ID)
+print(dim(interpro_data_mb))
+
+# Remove column suffixes like .1 if they exist
+colnames(interpro_data_mb) <- gsub("\\.1$", "", colnames(interpro_data_mb))
+
+# Select only Protein_ID and Description columns
+interpro_data_mb_selected <- interpro_data_mb %>%
+  dplyr::select(Protein_ID, Description)
+
+# Remove duplicate rows based on Protein_ID
+interpro_data_mb_clean <- interpro_data_mb_selected %>%
+  distinct(Protein_ID, .keep_all = TRUE)
+
+
+
+# Remove the .1 suffix from Protein_ID in interpro_data_mb_clean
+interpro_data_mb_clean$Protein_ID <- gsub("\\.1$", "", interpro_data_mb_clean$Protein_ID)
+
+# View the cleaned data
+head(interpro_data_mb_clean)
+
+
+# Check the dimensions after cleaning
+dim(interpro_data_mb_clean)
+
+########
+volcano_plot <- EnhancedVolcano(res_annotated,
+                                lab = res_annotated$Description,  # Label by descriptions
+                                selectLab = res_annotated$Description,  # Label all points with descriptions
+                                x = 'log2FoldChange',  # X-axis: log2 fold change
+                                y = 'pvalue',  # Y-axis: p-values
+                                title = 'Myrmecodia beccarii Fertilizer warty vs Fertilizer smooth',
+                                xlab = 'Log2 Fold Change',
+                                ylab = '-Log10 P-value',
+                                pCutoff = 0.1,  # Set the p-value cutoff
+                                FCcutoff = 1.0,  # Set the log2 fold change cutoff
+                                pointSize = 3.0,  # Adjust point size
+                                labSize = 3.0,  # Adjust label size
+                                max.overlaps = Inf)  # Allow overlapping labels
+
+# Print the volcano plot
+volcano_plot
